@@ -492,3 +492,56 @@ DEMO_AUTH_TRACE = [
     {"timestamp": (datetime.now() - timedelta(hours=7)).isoformat(), "username": "ADMIN01", "transaction": "SU01", "auth_object": "S_USER_GRP", "field": "ACTVT", "value": "02", "result": "PASS"},
     {"timestamp": (datetime.now() - timedelta(hours=8)).isoformat(), "username": "P.MUELLER", "transaction": "SUIM", "auth_object": "S_USER_GRP", "field": "ACTVT", "value": "03", "result": "PASS"},
 ]
+
+
+# ============================================================
+# Aliases and additional data for server_oauth.py compatibility
+# ============================================================
+
+DEMO_SECURITY_PARAMETERS = DEMO_SECURITY_PARAMS
+
+DEMO_SYSTEM_INFO = {
+    "system_id": "S4H",
+    "system_type": "SAP S/4HANA 2023",
+    "client": "100",
+    "hostname": "demo-s4h.syntaai.com",
+    "kernel_release": "793",
+    "database": "HANA 2.0 SPS07",
+    "os": "Linux",
+    "abap_version": "7.57",
+    "component_versions": [
+        {"component": "SAP_BASIS", "version": "757", "sp": "SP02"},
+        {"component": "SAP_ABA", "version": "757", "sp": "SP02"},
+        {"component": "S4CORE", "version": "107", "sp": "SP01"},
+    ],
+}
+
+DEMO_VULNERABILITIES = [
+    {"id": "VULN-001", "severity": "CRITICAL", "title": "Users with SAP_ALL in production", "affected_users": 3, "status": "Open"},
+    {"id": "VULN-002", "severity": "CRITICAL", "title": "Dormant admin accounts with full access", "affected_users": 2, "status": "Open"},
+    {"id": "VULN-003", "severity": "HIGH", "title": "Weak password policy parameters", "detail": "Min length 6, no complexity", "status": "Open"},
+    {"id": "VULN-004", "severity": "HIGH", "title": "RFC destinations with stored credentials", "affected_connections": 4, "status": "Open"},
+    {"id": "VULN-005", "severity": "HIGH", "title": "SoD violations in finance roles", "affected_users": 3, "status": "Open"},
+    {"id": "VULN-006", "severity": "MEDIUM", "title": "Accounts with default passwords", "affected_users": 4, "status": "Open"},
+    {"id": "VULN-007", "severity": "MEDIUM", "title": "SNC not enabled for network encryption", "status": "Open"},
+    {"id": "VULN-008", "severity": "LOW", "title": "Multiple GUI sessions allowed", "status": "Open"},
+]
+
+DEMO_COMPLIANCE_FRAMEWORKS = [
+    {"id": "SOX", "name": "Sarbanes-Oxley Act", "controls": 45, "description": "Financial reporting controls for public companies"},
+    {"id": "GDPR", "name": "General Data Protection Regulation", "controls": 32, "description": "EU data privacy and protection"},
+    {"id": "ISO27001", "name": "ISO/IEC 27001:2022", "controls": 58, "description": "Information security management"},
+    {"id": "NIST", "name": "NIST Cybersecurity Framework", "controls": 41, "description": "US cybersecurity standards"},
+]
+
+DEMO_SECURITY_CONTROLS = {
+    "total_controls": 1400,
+    "categories": [
+        {"name": "User Management", "count": 280, "description": "User lifecycle, access, authentication"},
+        {"name": "Authorization", "count": 350, "description": "Roles, profiles, critical permissions"},
+        {"name": "System Configuration", "count": 220, "description": "Profile parameters, security settings"},
+        {"name": "Network Security", "count": 180, "description": "RFC, ICF, gateway security"},
+        {"name": "Audit & Logging", "count": 150, "description": "Security audit log, change documents"},
+        {"name": "Compliance", "count": 220, "description": "SOX, GDPR, ISO 27001 controls"},
+    ],
+}

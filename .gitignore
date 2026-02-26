@@ -7,6 +7,10 @@ venv/
 .venv/
 *.egg-info/
 
+# Data & backups
+data/
+*.bak
+
 # Environment
 .env
 .env.local
