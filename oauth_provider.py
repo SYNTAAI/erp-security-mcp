@@ -1,7 +1,7 @@
 """
 SyntaAI MCP Server - OAuth 2.0 Authorization Server Provider
 
-Implements OAuthAuthorizationServerProvider from the MCP Python SDK.
+Implements OAuthAuthorizationServerProvider from the MCP Python SDK (1.26+).
 Acts as both auth server and resource server (standalone).
 
 Supports:
@@ -9,6 +9,10 @@ Supports:
 - Authorization Code + PKCE (RFC 7636)
 - Token refresh & revocation
 - Discovery endpoints (RFC 8414, RFC 9728) - handled by SDK
+
+The SDK's authorize() must return a URL string (not a Response).
+We redirect to our own /syntaai-login page, which handles the login form
+and POST, then redirects back to the client's redirect_uri with an auth code.
 
 Storage: In-memory with JSON file persistence for restarts.
 """
@@ -20,8 +24,10 @@ import time
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from mcp.server.auth.provider import (
+    AccessToken,
     AuthorizationCode,
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
@@ -29,7 +35,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse
 
 logger = logging.getLogger("syntaai.oauth")
 
@@ -54,7 +60,7 @@ def _save_json(path: Path, data: dict):
     path.write_text(json.dumps(data, indent=2, default=str))
 
 
-# --- Pre-configured test accounts for Anthropic review ---
+# --- Pre-configured test accounts ---
 TEST_USERS = {
     "mcp-review@anthropic.com": {
         "password": os.getenv("REVIEW_PASSWORD", "SyntaAI-MCP-Review-2026!"),
@@ -68,6 +74,8 @@ TEST_USERS = {
     },
 }
 
+ISSUER_URL = os.getenv("SYNTAAI_ISSUER_URL", "https://mcp.syntaai.com")
+
 
 class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
     """
@@ -79,6 +87,8 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
         self.auth_codes: dict[str, dict] = {}
         self.access_tokens: dict[str, dict] = {}
         self.refresh_tokens: dict[str, dict] = {}
+        # Pending authorization sessions: session_id -> {client, params}
+        self.pending_auth: dict[str, dict] = {}
         self._load_persisted_data()
         logger.info("OAuth provider initialized (%d clients)", len(self.clients))
 
@@ -110,8 +120,10 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
 
     # --- Client Registration (RFC 7591) ---
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        logger.info("get_client called with client_id=%s", client_id)
         client_data = self.clients.get(client_id)
         if client_data is None:
+            logger.warning("Client %s NOT FOUND (known: %s)", client_id, list(self.clients.keys()))
             return None
         try:
             return OAuthClientInformationFull(**client_data)
@@ -122,11 +134,17 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
     async def register_client(
         self, client_info: OAuthClientInformationFull
     ) -> OAuthClientInformationFull:
-        client_id = f"syntaai_{secrets.token_hex(16)}"
-        client_secret = secrets.token_hex(32)
         now = int(time.time())
-
         client_data = client_info.model_dump()
+
+        # Use client-provided client_id if present (MCP SDK pre-generates UUIDs),
+        # otherwise generate our own
+        client_id = client_data.get("client_id") or f"syntaai_{secrets.token_hex(16)}"
+        client_secret = client_data.get("client_secret") or secrets.token_hex(32)
+
+        logger.info("register_client — incoming client_id=%s, using client_id=%s",
+                     client_data.get("client_id"), client_id)
+
         client_data.update({
             "client_id": client_id,
             "client_secret": client_secret,
@@ -146,136 +164,59 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
         return OAuthClientInformationFull(**client_data)
 
     # --- Authorization Endpoint ---
+    # SDK calls authorize(client, params) -> str (a redirect URL)
     async def authorize(
         self,
         client: OAuthClientInformationFull,
         params: AuthorizationParams,
-        request: Request,
-    ) -> Response:
-        if request.method == "POST":
-            form = await request.form()
-            email = str(form.get("email", "")).strip()
-            password = str(form.get("password", "")).strip()
+    ) -> str:
+        # Store the pending authorization, then return a URL to our login page
+        session_id = secrets.token_hex(32)
+        self.pending_auth[session_id] = {
+            "client_id": client.client_id,
+            "client_name": client.client_name or "MCP Client",
+            "redirect_uri": str(params.redirect_uri) if params.redirect_uri else None,
+            "code_challenge": params.code_challenge,
+            "scopes": params.scopes or [],
+            "state": params.state,
+            "created_at": time.time(),
+            "expires_at": time.time() + 600,
+        }
+        logger.info("Authorization session %s created for client %s", session_id, client.client_id)
 
-            user = TEST_USERS.get(email)
-            if user and user["password"] == password:
-                code = secrets.token_hex(32)
-                self.auth_codes[code] = {
-                    "client_id": client.client_id,
-                    "redirect_uri": str(params.redirect_uri) if params.redirect_uri else None,
-                    "code_challenge": params.code_challenge,
-                    "scopes": params.scopes or [],
-                    "state": params.state,
-                    "user_email": email,
-                    "user_name": user["name"],
-                    "user_role": user["role"],
-                    "created_at": time.time(),
-                    "expires_at": time.time() + 600,
-                    "redirect_uri_provided_explicitly": str(params.redirect_uri) if params.redirect_uri else None,
-                }
-                logger.info("Auth code issued for %s -> client %s", email, client.client_id)
+        login_url = f"{ISSUER_URL}/syntaai-login?session={session_id}"
+        return login_url
 
-                redirect_url = str(params.redirect_uri)
-                sep = "&" if "?" in redirect_url else "?"
-                redirect_url += f"{sep}code={code}"
-                if params.state:
-                    redirect_url += f"&state={params.state}"
-                return RedirectResponse(url=redirect_url, status_code=302)
-            else:
-                return HTMLResponse(
-                    self._login_page(
-                        client_name=client.client_name or "MCP Client",
-                        scopes=params.scopes or [],
-                        error="Invalid email or password.",
-                    ),
-                    status_code=200,
-                )
+    def _issue_auth_code(self, session_id: str, user_email: str, user_name: str, user_role: str) -> str | None:
+        """Issue an auth code for a completed login. Returns redirect URL or None."""
+        session = self.pending_auth.pop(session_id, None)
+        if not session:
+            return None
+        if time.time() > session.get("expires_at", 0):
+            return None
 
-        return HTMLResponse(
-            self._login_page(
-                client_name=client.client_name or "MCP Client",
-                scopes=params.scopes or [],
-            ),
-            status_code=200,
-        )
+        code = secrets.token_hex(32)
+        self.auth_codes[code] = {
+            "client_id": session["client_id"],
+            "redirect_uri": session["redirect_uri"],
+            "code_challenge": session["code_challenge"],
+            "scopes": session["scopes"],
+            "state": session["state"],
+            "user_email": user_email,
+            "user_name": user_name,
+            "user_role": user_role,
+            "created_at": time.time(),
+            "expires_at": time.time() + 600,
+            "redirect_uri_provided_explicitly": session["redirect_uri"],
+        }
+        logger.info("Auth code issued for %s -> client %s", user_email, session["client_id"])
 
-    def _login_page(self, client_name: str, scopes: list[str], error: str = "") -> str:
-        scope_html = ""
-        if scopes:
-            items = "".join(
-                f'<li style="margin:4px 0;padding:4px 8px;background:#f0f4ff;border-radius:4px;font-size:14px;">{s}</li>'
-                for s in scopes
-            )
-            scope_html = f'''
-            <div style="margin:16px 0;">
-                <p style="font-size:14px;color:#555;margin-bottom:8px;">
-                    <strong>{client_name}</strong> requests access to:
-                </p>
-                <ul style="list-style:none;padding:0;">{items}</ul>
-            </div>'''
-
-        error_html = ""
-        if error:
-            error_html = f'''
-            <div style="background:#fee;border:1px solid #fcc;border-radius:8px;
-                        padding:12px;margin-bottom:16px;color:#c33;font-size:14px;">
-                {error}
-            </div>'''
-
-        return f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>SyntaAI - Sign In</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-background:linear-gradient(135deg,#0a1628,#1a365d,#2d4a7a);min-height:100vh;
-display:flex;align-items:center;justify-content:center}}
-.card{{background:#fff;border-radius:16px;padding:40px;width:100%;max-width:420px;
-box-shadow:0 20px 60px rgba(0,0,0,.3)}}
-.logo{{text-align:center;margin-bottom:24px}}
-.logo h1{{font-size:28px;color:#1a365d;margin-bottom:4px}}
-.logo p{{font-size:14px;color:#718096}}
-.fg{{margin-bottom:16px}}
-label{{display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:6px}}
-input{{width:100%;padding:12px 16px;border:2px solid #e2e8f0;border-radius:8px;font-size:16px}}
-input:focus{{outline:none;border-color:#3b82f6}}
-button{{width:100%;padding:14px;background:linear-gradient(135deg,#1a365d,#2563eb);
-color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer}}
-button:hover{{opacity:.9}}
-.hint{{margin-top:16px;padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;
-border-radius:8px;font-size:12px;color:#166534}}
-.foot{{text-align:center;margin-top:20px;font-size:12px;color:#9ca3af}}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo"><h1>SyntaAI</h1><p>ERP Security Platform</p></div>
-  {error_html}
-  <p style="font-size:14px;color:#555;margin-bottom:20px;text-align:center">
-    Sign in to authorize <strong>{client_name}</strong>
-  </p>
-  {scope_html}
-  <form method="POST">
-    <div class="fg"><label for="email">Email</label>
-      <input type="email" id="email" name="email" placeholder="you@company.com" required autofocus></div>
-    <div class="fg"><label for="password">Password</label>
-      <input type="password" id="password" name="password" placeholder="••••••••" required></div>
-    <button type="submit">Authorize &amp; Continue</button>
-  </form>
-  <div class="hint">
-    <strong>Demo Access:</strong><br>
-    Email: <code>demo@syntaai.com</code><br>
-    Password: <code>SyntaAI-Demo-2026!</code>
-  </div>
-  <div class="foot">
-    By signing in you agree to SyntaAI's
-    <a href="https://mcp.syntaai.com/terms" style="color:#3b82f6">Terms</a> &amp;
-    <a href="https://mcp.syntaai.com/privacy" style="color:#3b82f6">Privacy Policy</a>.
-  </div>
-</div>
-</body></html>'''
+        redirect_url = session["redirect_uri"]
+        sep = "&" if "?" in redirect_url else "?"
+        redirect_url += f"{sep}code={code}"
+        if session["state"]:
+            redirect_url += f"&state={session['state']}"
+        return redirect_url
 
     # --- Token Exchange ---
     async def load_authorization_code(
@@ -296,6 +237,7 @@ border-radius:8px;font-size:12px;color:#166534}}
             redirect_uri_provided_explicitly=code_data.get("redirect_uri_provided_explicitly") is not None,
             code_challenge=code_data.get("code_challenge", ""),
             scopes=code_data.get("scopes", []),
+            expires_at=code_data.get("expires_at", time.time() + 600),
         )
 
     async def exchange_authorization_code(
@@ -398,7 +340,7 @@ border-radius:8px;font-size:12px;color:#166534}}
         )
 
     # --- Token Verification ---
-    async def verify_access_token(self, token: str) -> dict[str, Any] | None:
+    async def load_access_token(self, token: str) -> AccessToken | None:
         td = self.access_tokens.get(token)
         if not td:
             return None
@@ -406,28 +348,158 @@ border-radius:8px;font-size:12px;color:#166534}}
             del self.access_tokens[token]
             self._persist_tokens()
             return None
-        return {
-            "sub": td["user_email"],
-            "name": td["user_name"],
-            "role": td["user_role"],
-            "scopes": td.get("scopes", []),
-            "client_id": td["client_id"],
-        }
+        return AccessToken(
+            token=token,
+            client_id=td["client_id"],
+            scopes=td.get("scopes", []),
+            expires_at=int(td.get("expires_at", 0)),
+        )
 
     # --- Token Revocation (RFC 7009) ---
     async def revoke_token(
         self,
-        client: OAuthClientInformationFull,
-        token: str,
-        token_type_hint: str | None = None,
+        token: AccessToken | RefreshToken,
     ) -> None:
         revoked = False
-        if token in self.access_tokens and self.access_tokens[token]["client_id"] == client.client_id:
-            del self.access_tokens[token]
-            revoked = True
-        if token in self.refresh_tokens and self.refresh_tokens[token]["client_id"] == client.client_id:
-            del self.refresh_tokens[token]
-            revoked = True
+        # Determine the token string based on type
+        if isinstance(token, AccessToken):
+            token_str = token.token
+            if token_str in self.access_tokens:
+                del self.access_tokens[token_str]
+                revoked = True
+        elif isinstance(token, RefreshToken):
+            token_str = token.token
+            if token_str in self.refresh_tokens:
+                del self.refresh_tokens[token_str]
+                revoked = True
         if revoked:
             self._persist_tokens()
-            logger.info("Token revoked for client %s", client.client_id)
+            logger.info("Token revoked: %s for client %s", type(token).__name__, token.client_id)
+
+
+# ============================================================
+# Login page HTML + Starlette route handler
+# ============================================================
+
+def _login_page_html(client_name: str, scopes: list[str], error: str = "") -> str:
+    scope_html = ""
+    if scopes:
+        items = "".join(
+            f'<li style="margin:4px 0;padding:4px 8px;background:#f0f4ff;border-radius:4px;font-size:14px;">{s}</li>'
+            for s in scopes
+        )
+        scope_html = f'''
+        <div style="margin:16px 0;">
+            <p style="font-size:14px;color:#555;margin-bottom:8px;">
+                <strong>{client_name}</strong> requests access to:
+            </p>
+            <ul style="list-style:none;padding:0;">{items}</ul>
+        </div>'''
+
+    error_html = ""
+    if error:
+        error_html = f'''
+        <div style="background:#fee;border:1px solid #fcc;border-radius:8px;
+                    padding:12px;margin-bottom:16px;color:#c33;font-size:14px;">
+            {error}
+        </div>'''
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>SyntaAI - Sign In</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+background:linear-gradient(135deg,#0a1628,#1a365d,#2d4a7a);min-height:100vh;
+display:flex;align-items:center;justify-content:center}}
+.card{{background:#fff;border-radius:16px;padding:40px;width:100%;max-width:420px;
+box-shadow:0 20px 60px rgba(0,0,0,.3)}}
+.logo{{text-align:center;margin-bottom:24px}}
+.logo h1{{font-size:28px;color:#1a365d;margin-bottom:4px}}
+.logo p{{font-size:14px;color:#718096}}
+.fg{{margin-bottom:16px}}
+label{{display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:6px}}
+input{{width:100%;padding:12px 16px;border:2px solid #e2e8f0;border-radius:8px;font-size:16px}}
+input:focus{{outline:none;border-color:#3b82f6}}
+button{{width:100%;padding:14px;background:linear-gradient(135deg,#1a365d,#2563eb);
+color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer}}
+button:hover{{opacity:.9}}
+.hint{{margin-top:16px;padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;
+border-radius:8px;font-size:12px;color:#166534}}
+.foot{{text-align:center;margin-top:20px;font-size:12px;color:#9ca3af}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo"><h1>SyntaAI</h1><p>ERP Security Platform</p></div>
+  {error_html}
+  <p style="font-size:14px;color:#555;margin-bottom:20px;text-align:center">
+    Sign in to authorize <strong>{client_name}</strong>
+  </p>
+  {scope_html}
+  <form method="POST">
+    <div class="fg"><label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="you@company.com" required autofocus></div>
+    <div class="fg"><label for="password">Password</label>
+      <input type="password" id="password" name="password" required></div>
+    <button type="submit">Authorize &amp; Continue</button>
+  </form>
+  <div class="hint">
+    <strong>Demo Access:</strong><br>
+    Email: <code>demo@syntaai.com</code><br>
+    Password: <code>SyntaAI-Demo-2026!</code>
+  </div>
+  <div class="foot">
+    By signing in you agree to SyntaAI's
+    <a href="https://mcp.syntaai.com/terms" style="color:#3b82f6">Terms</a> &amp;
+    <a href="https://mcp.syntaai.com/privacy" style="color:#3b82f6">Privacy Policy</a>.
+  </div>
+</div>
+</body></html>'''
+
+
+async def login_page_handler(request: Request) -> HTMLResponse | RedirectResponse:
+    """
+    Handles GET /syntaai-login?session=xxx  (show login form)
+    and POST /syntaai-login?session=xxx    (process login, issue auth code)
+    """
+    session_id = request.query_params.get("session", "")
+
+    # Get the provider instance from app state
+    provider: SyntaAIOAuthProvider = request.app.state.oauth_provider
+
+    session = provider.pending_auth.get(session_id)
+    if not session:
+        return HTMLResponse("<h1>Invalid or expired session</h1>", status_code=400)
+    if time.time() > session.get("expires_at", 0):
+        provider.pending_auth.pop(session_id, None)
+        return HTMLResponse("<h1>Session expired</h1>", status_code=400)
+
+    client_name = session.get("client_name", "MCP Client")
+    scopes = session.get("scopes", [])
+
+    if request.method == "POST":
+        form = await request.form()
+        email = str(form.get("email", "")).strip()
+        password = str(form.get("password", "")).strip()
+
+        user = TEST_USERS.get(email)
+        if user and user["password"] == password:
+            redirect_url = provider._issue_auth_code(
+                session_id, email, user["name"], user["role"]
+            )
+            if redirect_url:
+                return RedirectResponse(url=redirect_url, status_code=302)
+            return HTMLResponse("<h1>Failed to issue authorization code</h1>", status_code=500)
+        else:
+            return HTMLResponse(
+                _login_page_html(client_name, scopes, error="Invalid email or password."),
+                status_code=200,
+            )
+
+    return HTMLResponse(
+        _login_page_html(client_name, scopes),
+        status_code=200,
+    )

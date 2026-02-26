@@ -561,7 +561,22 @@ def password_policy_assessment() -> str:
 # ============================================================================
 
 if __name__ == "__main__":
+    import uvicorn
+    from starlette.routing import Route
+
     logger.info("Starting SyntaAI MCP Server on 0.0.0.0:8000")
     logger.info("OAuth: %s", "DISABLED" if NO_AUTH else "ENABLED")
     logger.info("Endpoint: http://0.0.0.0:8000/mcp")
-    mcp.run(transport="streamable-http")
+
+    app = mcp.streamable_http_app()
+
+    if not NO_AUTH:
+        from oauth_provider import login_page_handler
+        # Mount the login page route and store the provider in app state
+        app.routes.insert(0, Route("/syntaai-login", login_page_handler, methods=["GET", "POST"]))
+        app.state.oauth_provider = oauth_provider
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    server = uvicorn.Server(config)
+    import anyio
+    anyio.run(server.serve)
