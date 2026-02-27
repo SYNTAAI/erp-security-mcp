@@ -149,7 +149,7 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
             "client_id": client_id,
             "client_secret": client_secret,
             "client_id_issued_at": now,
-            "client_secret_expires_at": 0,
+            "client_secret_expires_at": int(time.time()) + 86400 * 365 * 10,
         })
         if not client_data.get("grant_types"):
             client_data["grant_types"] = ["authorization_code", "refresh_token"]
@@ -157,6 +157,19 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
             client_data["response_types"] = ["code"]
         if not client_data.get("token_endpoint_auth_method"):
             client_data["token_endpoint_auth_method"] = "client_secret_post"
+
+        # Always allow Claude's callback URLs
+        claude_callbacks = [
+            "https://claude.ai/api/mcp/auth_callback",
+            "https://claude.com/api/mcp/auth_callback",
+            "http://localhost:6274/oauth/callback",
+            "http://localhost:6274/oauth/callback/debug",
+        ]
+        existing_uris = client_data.get("redirect_uris", [])
+        for cb in claude_callbacks:
+            if cb not in existing_uris:
+                existing_uris.append(cb)
+        client_data["redirect_uris"] = existing_uris
 
         self.clients[client_id] = client_data
         self._persist_clients()
@@ -273,7 +286,7 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
         logger.info("Tokens issued for %s", code_data.get("user_email"))
         return OAuthToken(
             access_token=access_token,
-            token_type="Bearer",
+            token_type="bearer",
             expires_in=expires_in,
             refresh_token=refresh_token,
             scope=" ".join(authorization_code.scopes) if authorization_code.scopes else None,
@@ -333,7 +346,7 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
         logger.info("Tokens refreshed for %s", rt_data.get("user_email"))
         return OAuthToken(
             access_token=new_at,
-            token_type="Bearer",
+            token_type="bearer",
             expires_in=expires_in,
             refresh_token=new_rt,
             scope=" ".join(eff_scopes) if eff_scopes else None,
@@ -343,11 +356,14 @@ class SyntaAIOAuthProvider(OAuthAuthorizationServerProvider):
     async def load_access_token(self, token: str) -> AccessToken | None:
         td = self.access_tokens.get(token)
         if not td:
+            logger.info("load_access_token: token not found (prefix=%s...)", token[:20])
             return None
         if time.time() > td.get("expires_at", 0):
+            logger.info("load_access_token: token expired for %s", td.get("user_email"))
             del self.access_tokens[token]
             self._persist_tokens()
             return None
+        logger.info("load_access_token: valid token for %s (client=%s)", td.get("user_email"), td.get("client_id"))
         return AccessToken(
             token=token,
             client_id=td["client_id"],

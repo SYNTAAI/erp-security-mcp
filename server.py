@@ -119,7 +119,7 @@ else:
 
 # --- User Management (5) ---
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def list_users(status: str = "all", user_type: str = "all") -> dict:
     """List all SAP user accounts with filtering by status (active/locked/expired/all) and type (dialog/system/communication/all)."""
     users = DEMO_USERS
@@ -130,7 +130,7 @@ def list_users(status: str = "all", user_type: str = "all") -> dict:
     return {"total": len(users), "users": users}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_user_details(username: str) -> dict:
     """Get detailed user information including roles, profiles, login history, and lock status."""
     for u in DEMO_USERS:
@@ -139,7 +139,7 @@ def get_user_details(username: str) -> dict:
     return {"found": False, "message": f"User {username} not found"}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
 def lock_unlock_user(username: str, action: str = "lock") -> dict:
     """Lock or unlock a SAP user account. Action must be 'lock' or 'unlock'. This is a destructive operation."""
     for u in DEMO_USERS:
@@ -156,7 +156,7 @@ def lock_unlock_user(username: str, action: str = "lock") -> dict:
     return {"success": False, "message": f"User {username} not found"}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def list_user_roles(username: str) -> dict:
     """List all roles and profiles assigned to a specific user."""
     for u in DEMO_USERS:
@@ -171,7 +171,7 @@ def list_user_roles(username: str) -> dict:
     return {"found": False, "message": f"User {username} not found"}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def find_inactive_users(days: int = 90) -> dict:
     """Find users who haven't logged in for the specified number of days."""
     inactive = [u for u in DEMO_USERS if u.get("days_since_login", 0) >= days]
@@ -185,7 +185,7 @@ def find_inactive_users(days: int = 90) -> dict:
 
 # --- Security Analysis (5) ---
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_security_parameters() -> dict:
     """Get SAP security profile parameters compared against best practices."""
     return {
@@ -194,7 +194,7 @@ def get_security_parameters() -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def check_critical_authorizations() -> dict:
     """Find users with SAP_ALL, SAP_NEW, S_A.SYSTEM, and other dangerous profiles/authorizations."""
     critical = []
@@ -215,7 +215,7 @@ def check_critical_authorizations() -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_audit_log(event_type: str = "all", limit: int = 50) -> dict:
     """Retrieve security audit log entries. Filter by event_type: all, login_failed, auth_check, user_change, transaction."""
     logs = DEMO_AUDIT_LOG
@@ -224,7 +224,7 @@ def get_audit_log(event_type: str = "all", limit: int = 50) -> dict:
     return {"total": len(logs[:limit]), "entries": logs[:limit]}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def check_default_passwords() -> dict:
     """Check for accounts that still have default or initial passwords set."""
     default_pw = [u for u in DEMO_USERS if u.get("default_password", False)]
@@ -236,7 +236,7 @@ def check_default_passwords() -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_rfc_connections() -> dict:
     """Analyze RFC destinations for stored credentials and security risks."""
     return {
@@ -250,7 +250,7 @@ def get_rfc_connections() -> dict:
 
 # --- Compliance & Audit (5) ---
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def run_sod_check(username: str = "") -> dict:
     """Check for Segregation of Duties violations. Optionally filter by username."""
     violations = DEMO_SOD_VIOLATIONS
@@ -267,7 +267,7 @@ def run_sod_check(username: str = "") -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def generate_compliance_report(framework: str = "SOX") -> dict:
     """Generate a compliance assessment report for SOX, GDPR, ISO27001, or NIST framework."""
     fw = framework.upper()
@@ -293,7 +293,7 @@ def generate_compliance_report(framework: str = "SOX") -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def list_privileged_users() -> dict:
     """List all users with elevated privileges (admin roles, SAP_ALL, basis access)."""
     privileged = [u for u in DEMO_USERS if u.get("has_debug_auth", False) or any(p in ("SAP_ALL", "SAP_NEW") for p in u.get("profiles", []))]
@@ -304,7 +304,7 @@ def list_privileged_users() -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def check_password_policy() -> dict:
     """Analyze the current password policy configuration against security best practices."""
     policy = {
@@ -326,7 +326,7 @@ def check_password_policy() -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_transport_log(limit: int = 20) -> dict:
     """Get transport request log for change management audit trail."""
     return {"total": len(DEMO_TRANSPORT_LOG[:limit]), "transports": DEMO_TRANSPORT_LOG[:limit]}
@@ -334,7 +334,7 @@ def get_transport_log(limit: int = 20) -> dict:
 
 # --- Role & Authorization (5) ---
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def list_roles(search: str = "") -> dict:
     """List all security roles with optional search filter."""
     roles = DEMO_ROLES
@@ -343,7 +343,7 @@ def list_roles(search: str = "") -> dict:
     return {"total": len(roles), "roles": roles}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_role_details(role_name: str) -> dict:
     """Get detailed role information including authorizations, assigned users, and risk level."""
     for r in DEMO_ROLES:
@@ -352,7 +352,7 @@ def get_role_details(role_name: str) -> dict:
     return {"found": False, "message": f"Role {role_name} not found"}
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def compare_user_access(user1: str, user2: str) -> dict:
     """Compare access rights between two SAP users — roles, profiles, and authorizations."""
     u1 = next((u for u in DEMO_USERS if u["username"].upper() == user1.upper()), None)
@@ -375,7 +375,7 @@ def compare_user_access(user1: str, user2: str) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def find_users_with_role(role_name: str) -> dict:
     """Find all users who have a specific role assigned."""
     users = [u for u in DEMO_USERS if role_name.upper() in [r.upper() for r in u.get("roles", [])]]
@@ -386,7 +386,7 @@ def find_users_with_role(role_name: str) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def get_authorization_trace(username: str = "", transaction: str = "") -> dict:
     """Get authorization check trace entries. Filter by username and/or transaction code."""
     traces = [
@@ -576,7 +576,21 @@ if __name__ == "__main__":
         app.routes.insert(0, Route("/syntaai-login", login_page_handler, methods=["GET", "POST"]))
         app.state.oauth_provider = oauth_provider
 
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    # Request-level logging middleware to debug Claude.ai connection
+    from starlette.types import ASGIApp, Receive, Scope, Send
+    _inner_app = app
+
+    async def request_logger(scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "http":
+            method = scope.get("method", "?")
+            path = scope.get("path", "?")
+            headers = dict(scope.get("headers", []))
+            auth = headers.get(b"authorization", b"").decode()[:40]
+            ua = headers.get(b"user-agent", b"").decode()[:50]
+            logger.info(">>> INCOMING %s %s auth=[%s] ua=[%s]", method, path, auth, ua)
+        await _inner_app(scope, receive, send)
+
+    config = uvicorn.Config(request_logger, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
     import anyio
     anyio.run(server.serve)
