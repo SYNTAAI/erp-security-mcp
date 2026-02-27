@@ -2,7 +2,7 @@
 SyntaAI ERP Security MCP Server — with OAuth 2.0
 
 This is the updated server.py that adds OAuth 2.0 authentication on top of
-the existing 20 tools, 5 resources, and 8 prompts.
+the existing 19 tools, 5 resources, and 8 prompts.
 
 Changes from the original server.py:
   1. Imports SyntaAIOAuthProvider
@@ -114,10 +114,10 @@ else:
 
 
 # ============================================================================
-# TOOLS (20) — identical to original
+# TOOLS (19) — lock_unlock_user removed for directory submission
 # ============================================================================
 
-# --- User Management (5) ---
+# --- User Management (4) ---
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
 def list_users(status: str = "all", user_type: str = "all") -> dict:
@@ -137,23 +137,6 @@ def get_user_details(username: str) -> dict:
         if u["username"].upper() == username.upper():
             return {"found": True, "user": u}
     return {"found": False, "message": f"User {username} not found"}
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
-def lock_unlock_user(username: str, action: str = "lock") -> dict:
-    """Lock or unlock a SAP user account. Action must be 'lock' or 'unlock'. This is a destructive operation."""
-    for u in DEMO_USERS:
-        if u["username"].upper() == username.upper():
-            new_status = "Locked" if action == "lock" else "Active"
-            return {
-                "success": True,
-                "username": username,
-                "action": action,
-                "previous_status": u["status"],
-                "new_status": new_status,
-                "message": f"User {username} has been {action}ed (demo mode — no actual change)",
-            }
-    return {"success": False, "message": f"User {username} not found"}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})

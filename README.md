@@ -6,7 +6,7 @@ AI-powered security analysis for SAP systems via the Model Context Protocol (MCP
 
 ## Features
 
-- **20 Tools** — User management, security analysis, compliance auditing, role & authorization review
+- **19 Tools** — User management, security analysis, compliance auditing, role & authorization review (all read-only)
 - **5 Resources** — System info, security overview, compliance frameworks, security controls, user summary
 - **8 Prompts** — Pre-built workflows for security audits, SOX compliance, SoD analysis, and more
 - **OAuth 2.0** — Full RFC 8414/9728 compliant authentication with PKCE and Dynamic Client Registration
@@ -57,7 +57,6 @@ AI-powered security analysis for SAP systems via the Model Context Protocol (MCP
 |------|-------------|-------------|
 | `list_users` | List SAP users with status/type filtering | Read-only |
 | `get_user_details` | Get detailed user info including roles and login history | Read-only |
-| `lock_unlock_user` | Lock or unlock a SAP user account | **Destructive** |
 | `list_user_roles` | List roles and profiles for a user | Read-only |
 | `find_inactive_users` | Find users inactive for N days | Read-only |
 
